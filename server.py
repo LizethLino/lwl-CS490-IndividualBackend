@@ -124,15 +124,22 @@ def index():
 
 @app.route("/films/all", methods=['GET'])
 def filmsDisplay():
-    result = db.session.query(Film.film_id, Film.title, Film.description, Film.release_year)
+    page = request.args.get('page', 1, type=int) #query paramter -> /films/all?page=1
+    result = db.session.query(Film.film_id, Film.title, Film.description, Film.release_year).order_by(Film.film_id)
+    pagination = result.paginate(page=page, per_page=10)
+
     return jsonify([
         {
-            "film_id": row.film_id,
-            "title": row.title,
-            "description": row.description,
-            "release_year": row.release_year
+            "films": [{
+                    "film_id": film.film_id,
+                    "title": film.title,
+                    "description": film.description,
+                    "release_year": film.release_year
+                } for film in pagination.items],
+            "page_num": pagination.page,
+            "total_pages": pagination.pages,
+            "total_customers": pagination.total
         }
-        for row in result
     ])
 
 @app.route("/films/top5", methods=['GET'])
@@ -236,17 +243,23 @@ def actorTopFilms(myactor_id):
 
 @app.route("/customers/all", methods=["GET"])
 def customersDisplay():
-    result = db.session.query(Customer.customer_id, Customer.first_name, Customer.last_name, Customer.email, Customer.address_id)
+    page = request.args.get('page', 1, type=int) #query paramter -> /customers/all?page=1
+    result = db.session.query(Customer.customer_id, Customer.first_name, Customer.last_name, Customer.email, Customer.address_id).order_by(Customer.customer_id)
+    pagination = result.paginate(page=page, per_page=10)
     
     return jsonify([
         {
-            "customer_id": row.customer_id,
-            "first_name": row.first_name,
-            "last_name": row.last_name,
-            "email": row.email,
-            "address_id": row.address_id #note address ID has to be made into a model and managed
+            "customers": [{
+                    "customer_id": customer.customer_id,
+                    "first_name": customer.first_name,
+                    "last_name": customer.last_name,
+                    "email": customer.email,
+                    "address_id": customer.address_id
+                } for customer in pagination.items],
+            "page_num": pagination.page,
+            "total_pages": pagination.pages,
+            "total_customers": pagination.total
         }
-        for row in result
     ])
 
 @app.route("/customers/<int:mycustomer_id>", methods=["GET"])
