@@ -118,8 +118,25 @@ class Category(db.Model):
         return f"Category ID {self.category_id}: {self.name}"
     
 
-@app.route("/top5/films", methods=['GET'])
+@app.route("/")
 def index():
+    return "Hello world"
+
+@app.route("/films/all", methods=['GET'])
+def filmsDisplay():
+    result = db.session.query(Film.film_id, Film.title, Film.description, Film.release_year)
+    return jsonify([
+        {
+            "film_id": row.film_id,
+            "title": row.title,
+            "description": row.description,
+            "release_year": row.release_year
+        }
+        for row in result
+    ])
+
+@app.route("/films/top5", methods=['GET'])
+def topFilms():
     #view top 5 films
     subquery = db.session.query(Category.name) \
     .join(FilmCategory, FilmCategory.category_id == Category.category_id) \
@@ -144,7 +161,20 @@ def index():
         for row in result
     ])
 
-@app.route("/top5/actors", methods=['GET'])
+@app.route("/films/<int:myfilm_id>", methods=['GET'])
+def viewFilm(myfilm_id):
+    result = db.session.query(Film.film_id, Film.title, Film.description, Film.release_year).filter(Film.film_id==myfilm_id).limit(1)
+    return jsonify([
+        {
+            "film_id": row.film_id,
+            "title": row.title,
+            "description": row.description,
+            "release_year": row.release_year
+        }
+        for row in result
+    ])
+
+@app.route("/actors/top5", methods=['GET'])
 def topActors():
     #view top 5 actors
     result = db.session.query(Actor.actor_id, Actor.first_name, Actor.last_name, func.count(Actor.actor_id).label("movie_count")) \
@@ -164,13 +194,76 @@ def topActors():
         for row in result
     ])
 
-    #select a.actor_id, a.first_name, a.last_name, count(*) as movies 
-    #from film f 
-    #inner join film_actor fa on f.film_id = fa.film_id 
-    #inner join actor a on fa.actor_id = a.actor_id
-    #group by a.actor_id
-    #order by movies desc;
+@app.route("/actors/<int:myactor_id>", methods=["GET"])
+def viewActor(myactor_id):
+    result = db.session.query(Actor.actor_id, Actor.first_name, Actor.last_name).filter(Actor.actor_id==myactor_id).limit(1)
+    return jsonify([
+        {
+            "actor_id": row.actor_id,
+            "first_name": row.first_name,
+            "last_name": row.last_name,
+        }
+        for row in result
+    ])
 
+@app.route("/actors/<int:myactor_id>/top5films", methods=["GET"])
+def actorTopFilms(myactor_id):
+    subquery = db.session.query(Category.name) \
+    .join(FilmCategory, FilmCategory.category_id == Category.category_id) \
+    .filter(FilmCategory.film_id == Film.film_id) \
+    .limit(1) \
+    .correlate(Film).scalar_subquery()
+    
+    result = db.session.query(Film.film_id, Film.title, subquery.label('category'), func.count(Rental.rental_id).label("rental_count")) \
+    .join(FilmActor, Film.film_id==FilmActor.film_id) \
+    .join(Actor, Actor.actor_id==FilmActor.actor_id) \
+    .join(Inventory, Inventory.film_id==Film.film_id) \
+    .join(Rental, Inventory.inventory_id==Rental.inventory_id) \
+    .filter(Actor.actor_id==myactor_id) \
+    .group_by(Film.film_id) \
+    .order_by(func.count(Rental.rental_id).desc()) \
+    .limit(5)
+
+    return jsonify([
+        {
+            "film_id": row.film_id,
+            "title": row.title,
+            "category": row.category,
+            "rental_count": row.rental_count
+        }
+        for row in result
+    ])
+
+@app.route("/customers/all", methods=["GET"])
+def customersDisplay():
+    result = db.session.query(Customer.customer_id, Customer.first_name, Customer.last_name, Customer.email, Customer.address_id)
+    
+    return jsonify([
+        {
+            "customer_id": row.customer_id,
+            "first_name": row.first_name,
+            "last_name": row.last_name,
+            "email": row.email,
+            "address_id": row.address_id #note address ID has to be made into a model and managed
+        }
+        for row in result
+    ])
+
+@app.route("/customers/<int:mycustomer_id>", methods=["GET"])
+def viewCustomer(mycustomer_id):
+    result = db.session.query(Customer.customer_id, Customer.first_name, Customer.last_name, Customer.email, Customer.address_id) \
+    .filter(Customer.customer_id==mycustomer_id) \
+    .limit(1)
+    
+    return jsonify([
+        {
+            "customer_id": row.customer_id,
+            "first_name": row.first_name,
+            "last_name": row.last_name,
+            "email": row.email,
+            "address_id": row.address_id
+        } for row in result
+    ])
 
 if __name__ in "__main__":
     with app.app_context():
