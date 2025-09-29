@@ -188,42 +188,43 @@ def filmsDisplay():
     category = request.args.get('category_name',"", type=str)
     page = request.args.get('page', 1, type=int) #query paramter -> /films/all?page=1
 
-    result = db.session.query(Film.film_id, Film.title, Film.description, Film.release_year, Actor.first_name, Actor.last_name, Category.name) \
+    result = db.session.query(Film.film_id, Film.title, Film.description, Film.release_year, Category.name) \
         .join(FilmActor, FilmActor.film_id==Film.film_id) \
-        .join(Actor, Actor.actor_id == FilmActor.actor_id) \
+        .join(Actor, Actor.actor_id==FilmActor.actor_id) \
         .join(FilmCategory, FilmCategory.film_id == Film.film_id) \
         .join(Category, Category.category_id == FilmCategory.category_id)
 
     if film_title != "":
         result = result.filter(Film.title.ilike(f"%{film_title}%"))
     if actor_first_name != "":
-        result = result.filter(Actor.first_name.ilike(f"%{actor_first_name}%"))
+        result = result.filter(Actor.first_name.ilike(f"%{actor_first_name}%")) #edit
     if actor_last_name != "":
-        result = result.filter(Actor.last_name.ilike(f"%{actor_last_name}%"))
+        result = result.filter(Actor.last_name.ilike(f"%{actor_last_name}%")) #edit
     if category != "":
         result = result.filter(Category.name.ilike(f"%{category}%"))
 
-    result = result.order_by(Film.film_id)
+    result = result.order_by(Film.film_id).distinct(Film.film_id)
 
     pagination = result.paginate(page=page, per_page=10)
 
-    return jsonify([
+    return jsonify(
         {
             "films": [{
                     "film_id": film.film_id,
                     "title": film.title,
                     "description": film.description,
                     "release_year": film.release_year,
-                    "first_name": film.first_name,
-                    "last_name": film.last_name,
                     "category": film.name
                 } for film in pagination.items],
             "page_num": pagination.page,
             "total_pages": pagination.pages,
-            "total_customers": pagination.total
+            "total_retrieved": pagination.total
         }
-    ])
+    )
 
+#add more info related to films
+#number of copies in inventory
+#actors in movie
 @app.route("/films/top5", methods=["GET"])
 def topFilms():
     #view top 5 films
@@ -346,7 +347,7 @@ def customersDisplay():
     result = result.order_by(Customer.customer_id)
     pagination = result.paginate(page=page, per_page=10)
     
-    return jsonify([
+    return jsonify(
         {
             "customers": [{
                     "customer_id": customer.customer_id,
@@ -358,7 +359,7 @@ def customersDisplay():
             "total_pages": pagination.pages,
             "total_customers": pagination.total
         }
-    ])
+    )
 
 #add rental info i think
 @app.route("/customers/<int:mycustomer_id>", methods=["GET"])
