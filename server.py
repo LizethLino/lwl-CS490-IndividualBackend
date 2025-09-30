@@ -137,6 +137,8 @@ class Film(db.Model):
     special_features = db.Column(db.String(255))
     last_update = db.Column(db.DateTime, nullable = False, default = datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
+    actors = db.relationship("Actor", secondary="film_actor", backref="films")
+
     def __repr__(self) -> str:
         return f"Film ID {self.film_id}: {self.title} ({self.release_year})\n{self.description}"
 
@@ -239,7 +241,8 @@ def topFilms():
     .join(Rental, Inventory.inventory_id==Rental.inventory_id) \
     .group_by(Film.film_id) \
     .order_by(func.count(Rental.rental_id).desc()) \
-    .limit(5)
+    .limit(5) \
+    .all()
 
     return jsonify([
         {
@@ -253,20 +256,32 @@ def topFilms():
 
 @app.route("/films/<int:myfilm_id>", methods=["GET"])
 def viewFilm(myfilm_id):
-    result = db.session.query(Film.film_id, Film.title, Film.description, Film.release_year, Film.rating, Film.special_features) \
-    .filter(Film.film_id==myfilm_id).limit(1)
+    result = db.session.query(Film) \
+    .join(FilmActor, FilmActor.film_id==Film.film_id) \
+    .join(Actor, Actor.actor_id==FilmActor.actor_id) \
+    .filter(Film.film_id==myfilm_id).limit(1) \
+    .first()
+
+    if result is None:
+        return jsonify([])
 
     return jsonify([
         {
-            "film_id": row.film_id,
-            "title": row.title,
-            "description": row.description,
-            "release_year": row.release_year,
-            "rating": row.rating,
-            "special_features": row.special_features
-            #.split(',') on special_features
+            "film_id": result.film_id,
+            "title": result.title,
+            "description": result.description,
+            "release_year": result.release_year,
+            "rating": result.rating,
+            "special_features": result.special_features,
+            "actors": [
+                f"{actor.first_name} {actor.last_name}"
+                for actor in result.actors
+            ],
+            "length": result.length,
+            "rental_duration": result.rental_duration,
+            "rental_rate": result.rental_rate,
+            "replacement_cost": result.replacement_cost,
         }
-        for row in result
     ])
 
 @app.route("/actors/top5", methods=["GET"])
@@ -276,7 +291,8 @@ def topActors():
     .join(Film, Film.film_id == FilmActor.film_id) \
     .group_by(Actor.actor_id) \
     .order_by(func.count(Actor.actor_id).desc()) \
-    .limit(5)
+    .limit(5) \
+    .all()
     
     return jsonify([
         {
@@ -290,15 +306,22 @@ def topActors():
 
 @app.route("/actors/<int:myactor_id>", methods=["GET"])
 def viewActor(myactor_id):
-    result = db.session.query(Actor.actor_id, Actor.first_name, Actor.last_name).filter(Actor.actor_id==myactor_id).limit(1)
+    result = db.session.query(Actor) \
+    .filter(Actor.actor_id==myactor_id) \
+    .limit(1) \
+    .first()
+
+    if result is None:
+        return jsonify([])
+
     return jsonify([
         {
-            "actor_id": row.actor_id,
-            "first_name": row.first_name,
-            "last_name": row.last_name,
+            "actor_id": result.actor_id,
+            "first_name": result.first_name,
+            "last_name": result.last_name,
         }
-        for row in result
     ])
+
 
 @app.route("/actors/<int:myactor_id>/top5films", methods=["GET"])
 def actorTopFilms(myactor_id):
@@ -316,7 +339,8 @@ def actorTopFilms(myactor_id):
     .filter(Actor.actor_id==myactor_id) \
     .group_by(Film.film_id) \
     .order_by(func.count(Rental.rental_id).desc()) \
-    .limit(5)
+    .limit(5) \
+    .all()
 
     return jsonify([
         {
@@ -361,7 +385,7 @@ def customersDisplay():
         }
     )
 
-#add rental info i think
+#try adding .first() later
 @app.route("/customers/<int:mycustomer_id>", methods=["GET"])
 def viewCustomer(mycustomer_id):
     result = db.session.query(Customer.customer_id, Customer.first_name, Customer.last_name, Customer.email, Address.address, Address.district, City.city, Country.country) \
@@ -384,6 +408,7 @@ def viewCustomer(mycustomer_id):
         } for row in result
     ])
 
+#try adding .all() later
 @app.route("/customers/<int:mycustomer_id>/rental_info")
 def viewRentalHistory(mycustomer_id):
     nulls_sort = case((Rental.return_date == None, 0), else_=1)
