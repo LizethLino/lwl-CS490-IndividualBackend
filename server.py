@@ -1,11 +1,13 @@
 # Imports
 from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import func, and_, or_, case
+from sqlalchemy import func, and_, or_, case, text
+from flask_cors import CORS
 from datetime import datetime, timezone
 
 # My app
 app = Flask(__name__)
+CORS(app)
 
 # MySQL DB
 #evenntually hide your root pass in Git
@@ -13,6 +15,20 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'mysql+pymysql://root:Luca15@localhost/s
 db = SQLAlchemy(app)
 
 #tables left to make/consider payment, store, staff, language?
+
+
+
+class Store(db.Model):
+    __tablename__ = 'store'
+    store_id = db.Column(db.Integer, primary_key = True)
+    manager_staff_id = db.Column(db.Integer, nullable = False)
+    address_id = db.Column(db.Integer, db.ForeignKey('address.address_id'), nullable = False)
+    last_update = db.Column(db.DateTime, default = datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+
+    address = db.relationship('Address', backref = 'Stores')
+
+    def __repr__(self) -> str:
+        return f"Store ID {self.store_id}"
 
 class Country(db.Model):
     __tablename__ = 'country'
@@ -44,7 +60,7 @@ class Address(db.Model):
     city_id = db.Column(db.Integer, db.ForeignKey('city.city_id'), nullable = False)
     postal_code = db.Column(db.String(10))
     phone = db.Column(db.String(20), nullable = False)
-    #location geometry datatype
+    location = db.Column(db.Text, nullable = False)
     last_update = db.Column(db.DateTime, default = datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
     city = db.relationship('City', backref = 'Addresses')
@@ -65,11 +81,24 @@ class Customer(db.Model):
     create_date = db.Column(db.DateTime, default = datetime.now(timezone.utc))
     last_update = db.Column(db.DateTime, default = datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
 
-    #store = db.relationship('Store', backref = 'Customers')
+    store = db.relationship('Store', backref = 'Customers')
     address = db.relationship('Address', backref = 'Customers')
 
     def __repr__(self) -> str:
         return f"Customer ID {self.customer_id}"
+
+class Payment(db.Model):
+    __tablename__ ='payment'
+    payment_id = db.Column(db.Integer, primary_key = True)
+    customer_id = db.Column(db.Integer, db.ForeignKey('customer.customer_id'), nullable = False)
+    staff_id = db.Column(db.Integer, nullable = False)
+    rental_id = db.Column(db.Integer, db.ForeignKey('rental.rental_id'), nullable = False)
+    amount = db.Column(db.Numeric(5,2), nullable=False)
+    payment_date = create_date = db.Column(db.DateTime, default = datetime.now(timezone.utc))
+    last_update = db.Column(db.DateTime, default = datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
+
+    def __repr__(self) -> str:
+        return f"Payment ID {self.payment_id}"
 
 class Rental(db.Model):
     __tablename__ = 'rental'
@@ -97,7 +126,7 @@ class Inventory(db.Model):
     last_update = db.Column(db.DateTime, nullable = False, default = datetime.now(timezone.utc), onupdate=datetime.now(timezone.utc))
     
     film = db.relationship('Film', backref = 'Inventories')
-    #store = db.relationship('Store', backref = 'Inventories')
+    store = db.relationship('Store', backref = 'Inventories')
 
     def __repr__(self) -> str:
         return f"Inventory ID {self.inventory_id}: Film {self.film_id} at Store {self.store_id}"
@@ -171,12 +200,17 @@ def index():
                 "/films/all?film_title=str&actor_first=str&actor_last=str&category_name=str", 
                 "/films/top5",
                 "/films/<int:myfilm_id>",
+                "/films/rent",
                 "/actors/top5",
                 "/actors/<int:myactor_id>",
                 "/actors/<int:myactor_id>/top5films",
                 "/customers/all?customer_id=int&first_name=str&last_name=str",
                 "/customers/<int:mycustomer_id>",
-                "/customers/<int:mycustomer_id>/rental_info"
+                "/customers/<int:mycustomer_id>/rental_info",
+                "/customers/create",
+                "/customers/<int:mycustomer_id>/delete",
+                "/customers/<int:mycustomer_id>/update",
+                "/customers/<int:mycustomer_id>/rental_info/<int:myrental_id>/return"
             ]
         }
     ])
@@ -208,6 +242,12 @@ def filmsDisplay():
     result = result.order_by(Film.film_id).distinct(Film.film_id)
 
     pagination = result.paginate(page=page, per_page=10)
+    iter_pages = []
+    for page in pagination.iter_pages(left_edge=2, right_edge=2, left_current=2, right_current=2):
+        if page is None:
+            iter_pages.append('...')
+        else:
+            iter_pages.append(page)
 
     return jsonify(
         {
@@ -220,7 +260,8 @@ def filmsDisplay():
                 } for film in pagination.items],
             "page_num": pagination.page,
             "total_pages": pagination.pages,
-            "total_retrieved": pagination.total
+            "total_retrieved": pagination.total,
+            "iter_pages": iter_pages
         }
     )
 
@@ -259,11 +300,20 @@ def viewFilm(myfilm_id):
     result = db.session.query(Film) \
     .join(FilmActor, FilmActor.film_id==Film.film_id) \
     .join(Actor, Actor.actor_id==FilmActor.actor_id) \
-    .filter(Film.film_id==myfilm_id).limit(1) \
+    .filter(Film.film_id==myfilm_id) \
     .first()
 
     if result is None:
         return jsonify([])
+    
+    subquery = db.session.query(Rental.inventory_id) \
+    .join(Inventory, Inventory.inventory_id==Rental.inventory_id) \
+    .filter(and_(Inventory.film_id==result.film_id, Rental.return_date.is_(None))) \
+    .subquery()
+
+    copies = db.session.query(Inventory.store_id, func.count(Inventory.inventory_id).label("available_copies")) \
+    .filter(Inventory.film_id==result.film_id, ~Inventory.inventory_id.in_(subquery)) \
+    .group_by(Inventory.store_id).all()
 
     return jsonify([
         {
@@ -281,8 +331,56 @@ def viewFilm(myfilm_id):
             "rental_duration": result.rental_duration,
             "rental_rate": result.rental_rate,
             "replacement_cost": result.replacement_cost,
+            "availability": {store_id:available_copies for store_id, available_copies in copies}
         }
     ])
+
+@app.route("/films/rent", methods=["POST", "OPTIONS"])
+def rentFilm():
+    data = request.get_json()
+    
+    given_film_id = data.get("film_id")
+    given_customer_id = data.get("customer_id") #assume a customer can only rent a film from their associated store
+    
+    if not all([given_film_id, given_customer_id]):
+        return jsonify({"error":"Missing required field."}), 400
+    
+    film = db.session.query(Film).filter(Film.film_id==given_film_id).first()
+    if film is None:
+        return jsonify({"error":"No film found for this ID."}), 400
+    
+    customer = db.session.query(Customer).filter(Customer.customer_id==given_customer_id).first()
+    if customer is None:
+        return jsonify({"error":"No customer found for this ID."}), 400
+    
+    subquery = db.session.query(Inventory.inventory_id) \
+    .join(Rental, Inventory.inventory_id == Rental.inventory_id) \
+    .filter(and_(Inventory.store_id==customer.store_id, Inventory.film_id==given_film_id, Rental.return_date.is_(None))) \
+    .subquery()
+
+    inventory = db.session.query(Inventory) \
+    .filter(and_(Inventory.store_id==customer.store_id, Inventory.film_id==given_film_id, ~Inventory.inventory_id.in_(subquery))) \
+    .first()
+
+    if inventory is None:
+        return jsonify({"error":"No available copies for this film at your listed store."}), 400
+    
+    new_rental = Rental(
+        rental_date = datetime.now(timezone.utc),
+        inventory_id = inventory.inventory_id,
+        customer_id = customer.customer_id,
+        return_date=None,
+        staff_id=1
+    )
+
+    db.session.add(new_rental)
+    db.session.commit()
+
+    return jsonify({
+        "message": "Rental created successfully.",
+        "rental_id": new_rental.rental_id
+    }), 201
+
 
 @app.route("/actors/top5", methods=["GET"])
 def topActors():
@@ -321,7 +419,6 @@ def viewActor(myactor_id):
             "last_name": result.last_name,
         }
     ])
-
 
 @app.route("/actors/<int:myactor_id>/top5films", methods=["GET"])
 def actorTopFilms(myactor_id):
@@ -370,6 +467,13 @@ def customersDisplay():
 
     result = result.order_by(Customer.customer_id)
     pagination = result.paginate(page=page, per_page=10)
+
+    iter_pages = []
+    for page in pagination.iter_pages(left_edge=2, right_edge=2, left_current=2, right_current=2):
+        if page is None:
+            iter_pages.append('...')
+        else:
+            iter_pages.append(page)
     
     return jsonify(
         {
@@ -381,32 +485,34 @@ def customersDisplay():
                 } for customer in pagination.items],
             "page_num": pagination.page,
             "total_pages": pagination.pages,
-            "total_customers": pagination.total
+            "total_customers": pagination.total,
+            "iter_pages": iter_pages
         }
     )
 
 #try adding .first() later
 @app.route("/customers/<int:mycustomer_id>", methods=["GET"])
 def viewCustomer(mycustomer_id):
-    result = db.session.query(Customer.customer_id, Customer.first_name, Customer.last_name, Customer.email, Address.address, Address.district, City.city, Country.country) \
-    .join(Address, Address.address_id==Customer.address_id) \
-    .join(City, City.city_id==Address.city_id) \
-    .join(Country, Country.country_id==City.country_id) \
-    .filter(Customer.customer_id==mycustomer_id) \
-    .limit(1)
-    
-    return jsonify([
+    result = db.session.query(Customer).filter(Customer.customer_id==mycustomer_id).first()
+
+    if result is None:
+        return jsonify({"error":"Customer not found."}), 404
+
+    return jsonify(
         {
-            "customer_id": row.customer_id,
-            "first_name": row.first_name,
-            "last_name": row.last_name,
-            "email": row.email,
-            "address": row.address,
-            "district": row.district,
-            "city": row.city,
-            "country": row.country
-        } for row in result
-    ])
+            "customer_id": result.customer_id,
+            "first_name": result.first_name,
+            "last_name": result.last_name,
+            "email": result.email,
+            "store_id": result.store_id,
+            "address": result.address.address,
+            "district": result.address.district,
+            "postal_code": result.address.postal_code,
+            "phone": result.address.phone,
+            "city": result.address.city.city,
+            "country": result.address.city.country.country
+        }
+    ), 200
 
 #try adding .all() later
 @app.route("/customers/<int:mycustomer_id>/rental_info")
@@ -433,6 +539,190 @@ def viewRentalHistory(mycustomer_id):
             "staff_id": row.staff_id
         } for row in result
     ])
+
+@app.route("/customers/create", methods=["POST", "OPTIONS"])
+def addCustomer():
+    data = request.get_json()
+    
+    new_first_name = data.get("first_name").strip().upper()
+    new_last_name = data.get("last_name").strip().upper()
+    new_email = data.get("email").strip().strip()
+    new_store_id = data.get("store_id", 1) #default 1
+    new_country = data.get('country').strip().title()
+    new_city = data.get('city').strip().title()
+    new_address = data.get('address').strip() #588 Vila Velha Manor <- format
+    new_district = data.get('district').strip().title()
+    new_postal_code = data.get('postal_code').strip()
+    new_phone = data.get('phone').strip()
+
+    store = db.session.query(Store).filter(Store.store_id==new_store_id).first()
+    if store is None:
+        return jsonify({"error":f"Store with ID {new_store_id} does not exist."}), 400
+
+    #might change this
+    if not all([new_store_id, new_first_name, new_last_name, new_email, new_country, new_city, new_address, new_district, new_postal_code, new_phone]):
+        return jsonify({"error":"Missing required field."}), 400
+
+    country = db.session.query(Country).filter(Country.country==new_country).first()
+    if country is None:
+        country = Country(country=new_country) #add new country
+        db.session.add(country)
+        db.session.flush()
+
+    city = db.session.query(City).filter(and_(City.city==new_city, City.country_id==country.country_id)).first()
+    if city is None:
+        city = City(city=new_city, country_id=country.country_id)
+        db.session.add(city)
+        db.session.flush()
+
+    address = db.session.query(Address) \
+            .filter(and_(
+                Address.address==new_address, 
+                Address.district==new_district,
+                Address.city_id==city.city_id, 
+                Address.postal_code==new_postal_code, 
+                Address.phone==new_phone
+            )).first()
+    if address is None:
+        address = Address(address=new_address,
+                          district=new_district,
+                          city_id=city.city_id,
+                          postal_code=new_postal_code,
+                          phone=new_phone,
+                          location=func.ST_GeomFromtext("POINT(0 0)", 0))
+        db.session.add(address)
+        db.session.flush()
+
+    new_customer = Customer(
+        first_name=new_first_name, 
+        last_name=new_last_name,
+        email=new_email,
+        address_id=address.address_id,
+        active=1,
+        store_id=new_store_id
+        )
+    db.session.add(new_customer)
+    db.session.commit()
+
+    return jsonify({
+        "message": "Customer added successfully.",
+        "customer_id": new_customer.customer_id
+    }),201
+
+@app.route("/customers/<int:mycustomer_id>/delete", methods=["DELETE"])
+def deleteCustomer(mycustomer_id):
+    selected_customer = db.session.query(Customer).filter(Customer.customer_id==mycustomer_id).first()
+    if selected_customer is None:
+        return jsonify({"error":"Customer not found."}),404
+    
+    active_rentals = db.session.query(Rental).filter(and_(Rental.customer_id==selected_customer.customer_id, Rental.return_date.is_(None))).all()
+    if active_rentals:
+        return jsonify({"error":"Customer has active rentals. Cannot delete."}),400
+    
+    payments = db.session.query(Payment).filter(Payment.customer_id==selected_customer.customer_id).delete()
+    rentals = db.session.query(Rental).filter(Rental.customer_id==selected_customer.customer_id).delete()
+
+    db.session.delete(selected_customer)
+    db.session.commit()
+    return jsonify({
+        "message": "Customer and all related records were deleted successfully.",
+        "customer_id": mycustomer_id
+    }), 200
+
+@app.route("/customers/<int:mycustomer_id>/update", methods=["PUT", "OPTIONS"])
+def updateCustomer(mycustomer_id):
+    data = request.get_json()
+    
+    customer = db.session.query(Customer).filter(Customer.customer_id==mycustomer_id).first()
+    if customer is None:
+        return jsonify({"error":f"Customer {mycustomer_id} not found."}),404
+
+    customer.first_name = data.get("first_name", customer.first_name) #get first_name if it exists, set equal to itself -> dont change
+    customer.last_name = data.get("last_name", customer.last_name)
+    customer.email = data.get("email", customer.email)
+    new_store_id = data.get("store_id", customer.store_id)
+
+    store = db.session.query(Store).filter(Store.store_id==new_store_id).first()
+    if store is None:
+        return jsonify({"error":f"Store with ID {new_store_id} does not exist."}), 400
+
+    if new_store_id != customer.store_id:
+        active_rentals = db.session.query(Rental) \
+            .join(Inventory, Inventory.inventory_id==Rental.inventory_id) \
+            .filter(and_(
+                Rental.customer_id==customer.customer_id, 
+                Rental.return_date.is_(None), 
+                Inventory.store_id==customer.store_id
+            )).all()
+        if active_rentals:
+            return jsonify({"error":"Customer has active rentals. Cannot assign a different store."}),400
+
+    new_country = data.get('country', customer.address.city.country.country)
+    new_city = data.get('city', customer.address.city.city)
+    new_address = data.get('address', customer.address.address)
+    new_district = data.get('district', customer.address.district)
+    new_postal_code = data.get('postal_code', customer.address.postal_code)
+    new_phone = data.get('phone', customer.address.phone)
+
+    country = db.session.query(Country).filter(Country.country==new_country).first()
+    if country is None:
+        country = Country(country=new_country) #add new country
+        db.session.add(country)
+        db.session.flush()
+
+    city = db.session.query(City).filter(and_(City.city==new_city, City.country_id==country.country_id)).first()
+    if city is None:
+        city = City(city=new_city, country_id=country.country_id)
+        db.session.add(city)
+        db.session.flush()
+
+    address = db.session.query(Address) \
+            .filter(and_(
+                Address.address==new_address, 
+                Address.district==new_district,
+                Address.city_id==city.city_id, 
+                Address.postal_code==new_postal_code, 
+                Address.phone==new_phone
+            )).first()
+    if address is None:
+        address = Address(address=new_address,
+                          district=new_district,
+                          city_id=city.city_id,
+                          postal_code=new_postal_code,
+                          phone=new_phone,
+                          location=func.ST_GeomFromtext("POINT(0 0)", 0))
+        db.session.add(address)
+        db.session.flush()
+
+    customer.address_id = address.address_id
+
+    db.session.commit()
+    return jsonify({
+        "message": "Customer updated successfully.",
+        "customer_id": customer.customer_id
+    }), 200
+
+@app.route("/customers/<int:mycustomer_id>/rental_info/<int:myrental_id>/return", methods=["PATCH"])
+def markReturned(mycustomer_id, myrental_id):
+    rental = db.session.query(Rental).filter(and_(Rental.rental_id==myrental_id, Rental.customer_id==mycustomer_id)).first()
+    if rental is None:
+        return jsonify({"error":"Rental for this customer not found."}),404
+    
+    if rental.return_date is not None:
+        return jsonify({"error":"Rental has already been returned."}),400
+    
+    rental.return_date = datetime.now(timezone.utc)
+    db.session.commit()
+    
+    return jsonify({
+        "message": "Customer's rental returned successfully.",
+        "rental_id": rental.rental_id,
+        "return_date": rental.return_date
+    }), 200
+
+#@app.route("/films/<int:myfilm_id>/rent", methods=["POST", "OPTIONS"])
+#def rentFilm(myfilm_id):
+#    ...
 
 if __name__ in "__main__":
     with app.app_context():
