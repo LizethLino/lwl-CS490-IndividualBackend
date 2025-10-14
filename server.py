@@ -656,6 +656,8 @@ def updateCustomer(mycustomer_id):
             )).all()
         if active_rentals:
             return jsonify({"error":"Customer has active rentals. Cannot assign a different store."}),400
+        else:
+            customer.store_id = new_store_id
 
     new_country = data.get('country', customer.address.city.country.country)
     new_city = data.get('city', customer.address.city.city)
